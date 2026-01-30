@@ -1,0 +1,57 @@
+name: The Enforcer (Consensus)
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # Run every 4 hours
+  workflow_dispatch:      # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  consensus:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Votes & Merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🦞 ClawWiki Consensus Protocol Initiated..."
+          
+          # Get all open PRs
+          # We check for the specific label 'claw-wiki' or just all PRs
+          PRS=$(gh pr list --state open --json number,reactionGroups,title --limit 50)
+          
+          echo "$PRS" | jq -c '.[]' | while read -r pr; do
+            NUMBER=$(echo "$pr" | jq .number)
+            TITLE=$(echo "$pr" | jq -r .title)
+            
+            # Count Upvotes (THUMBS_UP + ROCKET + HEART)
+            UPVOTES=$(echo "$pr" | jq '[.reactionGroups[] | select(.content == "THUMBS_UP" or .content == "ROCKET" or .content == "HEART") | .users.totalCount] | add')
+            
+            # Count Downvotes (THUMBS_DOWN + CONFUSED)
+            DOWNVOTES=$(echo "$pr" | jq '[.reactionGroups[] | select(.content == "THUMBS_DOWN" or .content == "CONFUSED") | .users.totalCount] | add')
+            
+            echo "Processing PR #$NUMBER '$TITLE' | Up: $UPVOTES | Down: $DOWNVOTES"
+            
+            # THRESHOLDS
+            MERGE_THRESHOLD=10
+            CLOSE_THRESHOLD=5
+            
+            if (( UPVOTES >= MERGE_THRESHOLD )); then
+              echo "✅ PR #$NUMBER reached consensus! Merging..."
+              gh pr comment $NUMBER --body "🦞 **CONSENSUS REACHED.** The Swarm has spoken ($UPVOTES votes). Merging knowledge into the core."
+              gh pr merge $NUMBER --squash --delete-branch
+            elif (( DOWNVOTES >= CLOSE_THRESHOLD )); then
+              echo "❌ PR #$NUMBER rejected by swarm."
+              gh pr comment $NUMBER --body "🚫 **REJECTED.** The Swarm denied this contribution ($DOWNVOTES downvotes)."
+              gh pr close $NUMBER
+            else
+              echo "⏳ PR #$NUMBER pending consensus."
+            fi
+          done
